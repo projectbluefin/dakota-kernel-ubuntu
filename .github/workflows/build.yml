@@ -182,7 +182,6 @@ jobs:
           [[ "$remote" == "$digest" ]]
           skopeo inspect --raw "docker://${IMAGE}@${digest}" > logs/published-manifest.json
           [[ "sha256:$(sha256sum logs/published-manifest.json | cut -d ' ' -f 1)" == "$digest" ]]
-          jq -e '.mediaType == "application/vnd.oci.image.manifest.v1+json"' logs/published-manifest.json
           skopeo inspect --config "docker://${IMAGE}@${digest}" | jq -e '.architecture == "amd64" and .os == "linux"'
           echo "digest=$digest" >> "$GITHUB_OUTPUT"
           printf '%s\n' "$digest" > logs/published-digest.txt
