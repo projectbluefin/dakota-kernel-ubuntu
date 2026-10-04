@@ -37,13 +37,13 @@ Use the repository's [Actions page](https://github.com/projectbluefin/dakota-ker
 ```sh
 gh workflow run build.yml --repo projectbluefin/dakota-kernel-ubuntu --ref development
 gh run list --repo projectbluefin/dakota-kernel-ubuntu --branch development --limit 5
-gh run watch --repo projectbluefin/dakota-kernel-ubuntu RUN_ID
+gh run watch --repo projectbluefin/dakota-kernel-ubuntu RUN_ID --interval 60
 gh run view --repo projectbluefin/dakota-kernel-ubuntu RUN_ID --log
 ```
 
 Replace `RUN_ID` with the actual listed run ID. Compilation happens on the remote runner through the pinned BuildStream container. The producer command is `just build`: it builds `kernel-image.bst` and checks the OCI layout out to `oci/`. `just bst <ARGS>` exposes the same pinned BST2 Podman wrapper; `BST_FLAGS` supplies optional global BST flags. Run these commands on a remote Linux builder, not as a local compilation prerequisite.
 
-GHA caches the completed kernel OCI by the complete producer-input fingerprint. Documentation-only commits reuse those bytes; recipe, toolchain-pin, runner, license or workflow changes invalidate the cache. The filesystem/configuration inspection runs on cache hits too. Cold builds use the SDK's upstream artifact caches before compiling missing elements.
+GHA restores BuildStream's native source/artifact cache and saves it even if a later packaging step fails. BuildStream's content keys decide which artifacts remain valid after source, configuration or toolchain changes; an OCI-only change does not require recompiling an unchanged kernel. Cache retention is best-effort under GitHub's storage quota. Cold builds use the SDK's upstream artifact caches before compiling missing elements. README-only pushes do not launch another build; use manual dispatch when wanted.
 
 Published immutable tags have the syntax **`sha-<40-character producer commit>`**. Only the default branch updates **`latest`** and **`ubuntu-26.10`**. Tags identify producer commits, not the upstream kernel commit. Pin consumers by the per-platform manifest digest, not by rolling tags or an OCI index digest. Do not consume a tag until its publication run succeeds.
 

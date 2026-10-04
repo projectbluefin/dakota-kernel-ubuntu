@@ -45,15 +45,15 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Restore unchanged kernel OCI
-        id: kernel-cache
-        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5
+      - name: Restore BuildStream sources and artifacts
+        id: buildstream-cache
+        uses: actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25 # v5
         with:
-          path: oci/
-          key: kernel-oci-${{ runner.os }}-${{ hashFiles('project.conf', 'elements/**', 'Justfile', 'LICENSE', '.github/workflows/build.yml') }}
+          path: ~/.cache/buildstream
+          key: kernel-bst-${{ runner.os }}-${{ hashFiles('project.conf', 'elements/**', 'Justfile', 'LICENSE', '.github/workflows/build.yml') }}
+          restore-keys: kernel-bst-${{ runner.os }}-
 
       - name: Setup hosted build runner
-        if: steps.kernel-cache.outputs.cache-hit != 'true'
         uses: projectbluefin/actions/bootc-build/setup-runner@v1
         with:
           storage-backend: btrfs
@@ -62,7 +62,6 @@ jobs:
           install-tools: '["just"]'
 
       - name: Build kernel OCI with upstream BuildStream caches
-        if: steps.kernel-cache.outputs.cache-hit != 'true'
         timeout-minutes: 315
         run: |
           set -euo pipefail
@@ -105,6 +104,13 @@ jobs:
           path: logs/
           retention-days: 14
           if-no-files-found: warn
+
+      - name: Save complete BST artifacts even after packaging failure
+        if: always() && !cancelled() && steps.buildstream-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@caa296126883cff596d87d8935842f9db880ef25 # v5
+        with:
+          path: ~/.cache/buildstream
+          key: ${{ steps.buildstream-cache.outputs.cache-primary-key }}
 
   publish:
     needs: build

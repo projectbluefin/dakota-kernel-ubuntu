@@ -1,6 +1,7 @@
 kind: script
 
 build-depends:
+- dakota.bst:freedesktop-sdk.bst:public-stacks/runtime-gnu.bst
 - dakota.bst:freedesktop-sdk.bst:components/oci-builder.bst
 - filename: kernel.bst
   config:
