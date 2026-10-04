@@ -2,7 +2,23 @@ name: Build and publish Ubuntu kernel
 
 on:
   push:
+    branches: [development]
+    paths:
+      - 'elements/**'
+      - 'project.conf'
+      - 'Justfile'
+      - 'LICENSE'
+      - '.github/workflows/build.yml'
+      - '.github/scripts/**'
   pull_request:
+    branches: [development]
+    paths:
+      - 'elements/**'
+      - 'project.conf'
+      - 'Justfile'
+      - 'LICENSE'
+      - '.github/workflows/build.yml'
+      - '.github/scripts/**'
   workflow_dispatch:
 
 permissions:
@@ -48,10 +64,9 @@ jobs:
       - name: Build kernel OCI with upstream BuildStream caches
         if: steps.kernel-cache.outputs.cache-hit != 'true'
         timeout-minutes: 315
-        env:
-          BST_FLAGS: --max-jobs 2 --builders 1
         run: |
           set -euo pipefail
+          export BST_FLAGS="--max-jobs $(nproc) --builders 1"
           mkdir -p logs
           just build 2>&1 | tee logs/build.log
 
