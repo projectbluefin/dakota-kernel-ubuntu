@@ -8,9 +8,31 @@ import tarfile
 import tempfile
 import unittest
 
+from registry_metadata import prepare
+
 
 class KernelEvidenceTests(unittest.TestCase):
     def test_dynamic_derivation_from_oci_and_sources(self):
+        for release, tag, codename, ubuntu in (
+            ("7.3.0-rc5-9-generic-dakota", "Ubuntu-7.3.0-9.9", "stonking", "26.10"),
+            ("7.4.0-12-generic-dakota", "Ubuntu-7.4.0-12.13", "future", "27.04"),
+        ):
+            with self.subTest(release=release):
+                self.check_dynamic_derivation(release, tag, codename, ubuntu)
+
+    def test_rejects_codename_and_declared_release_mismatch(self):
+        self.check_dynamic_derivation(
+            "7.3.0-rc5-9-generic-dakota", "Ubuntu-7.3.0-9.9", "stonking", "26.10",
+            declared_release="26.04", expected_error="Ubuntu release metadata mismatch",
+        )
+
+    def test_rejects_source_tag_not_matching_pinned_revision(self):
+        self.check_dynamic_derivation(
+            "7.3.0-rc5-9-generic-dakota", "Ubuntu-7.3.0-9.9", "stonking", "26.10",
+            source_pin="f" * 40, expected_error="Pinned Ubuntu revision does not match",
+        )
+
+    def check_dynamic_derivation(self, rel, synth_tag, codename, ubuntu, declared_release=None, source_pin=None, expected_error=None):
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)
             layout = root / "oci"
@@ -19,7 +41,6 @@ class KernelEvidenceTests(unittest.TestCase):
             logs = root / "logs"
             logs.mkdir()
 
-            rel = "7.3.0-rc5-9-generic-dakota"
             base = f"usr/lib/modules/{rel}"
 
             tar_buf = io.BytesIO()
@@ -90,7 +111,7 @@ class KernelEvidenceTests(unittest.TestCase):
             (layout / "index.json").write_text(json.dumps(index))
 
             # Initialize a synthetic local git repository to act as upstream Launchpad repo
-            upstream_repo = root / "upstream-repo" / "+git" / "stonking"
+            upstream_repo = root / "upstream-repo" / "+git" / codename
             upstream_repo.mkdir(parents=True)
             subprocess.run(["git", "init", "--bare", str(upstream_repo)], check=True, capture_output=True)
             work_repo = root / "work-repo"
@@ -103,9 +124,7 @@ class KernelEvidenceTests(unittest.TestCase):
             subprocess.run(["git", "commit", "--no-verify", "-m", "feat: initial commit"], cwd=work_repo, check=True, capture_output=True)
             peeled_commit = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=work_repo, text=True).strip()
 
-            synth_tag = "Ubuntu-7.3.0-9.9"
             subprocess.run(["git", "tag", "-a", synth_tag, "-m", f"Release {synth_tag}"], cwd=work_repo, check=True)
-            tag_obj = subprocess.check_output(["git", "rev-parse", f"refs/tags/{synth_tag}"], cwd=work_repo, text=True).strip()
             subprocess.run(["git", "push", str(upstream_repo), "--tags", "HEAD"], cwd=work_repo, check=True, capture_output=True)
 
             (root / "elements").mkdir(parents=True)
@@ -115,25 +134,50 @@ class KernelEvidenceTests(unittest.TestCase):
             upstream_url = f"file://{upstream_repo.resolve()}"
             (root / "project.conf").write_text(f"name: dakota-kernel-ubuntu\naliases:\n  local_repo: {upstream_url}\n")
             (root / "elements" / "kernel.bst").write_text(
-                f"kind: make\nsources:\n- kind: git_repo\n  url: {upstream_url}\n  track: Ubuntu-7.3.0-*\n  ref: {synth_tag}-0-g{tag_obj}\n"
+                f"kind: make\nvariables:\n  ubuntu-release: '{declared_release or ubuntu}'\nsources:\n- kind: git_repo\n  url: {upstream_url}\n  track: Ubuntu-*\n  ref: {synth_tag}-0-g{source_pin or peeled_commit}\n"
             )
 
             repo_root = Path(__file__).resolve().parents[2]
             script_path = repo_root / ".github" / "scripts" / "kernel-evidence.py"
+            feeds = {
+                "https://changelogs.ubuntu.com/meta-release": f"Dist: {codename}\nVersion: {ubuntu}\nSupported: 1\n",
+                "https://changelogs.ubuntu.com/meta-release-development": "",
+            }
+            if codename == "stonking":
+                feeds["https://changelogs.ubuntu.com/meta-release"] = "Dist: resolute\nVersion: 26.04.1 LTS\nSupported: 1\n"
+                feeds["https://changelogs.ubuntu.com/meta-release-development"] = f"Dist: stonking\nVersion: {ubuntu}\nSupported: 0\n"
+            runner = """import io, json, runpy, sys
+from pathlib import Path
+from unittest.mock import patch
+sys.path.insert(0, str(Path(sys.argv[1]).parent))
+feeds = json.loads(sys.argv[2])
+with patch('track_ubuntu_release.urlopen', side_effect=lambda url, **kwargs: io.BytesIO(feeds[url].encode())):
+    runpy.run_path(sys.argv[1], run_name='__main__')
+"""
             proc = subprocess.run(
-                ["python3", str(script_path)],
+                ["python3", "-c", runner, str(script_path), json.dumps(feeds)],
                 cwd=root,
                 capture_output=True,
                 text=True,
             )
+            if expected_error:
+                self.assertNotEqual(proc.returncode, 0)
+                self.assertIn(expected_error, proc.stderr)
+                self.assertFalse((root / "logs" / "kernel-evidence.json").exists())
+                return
             self.assertEqual(proc.returncode, 0, msg=f"Script failed:\n{proc.stderr}\n{proc.stdout}")
             evidence = json.loads((root / "logs" / "kernel-evidence.json").read_text())
             self.assertEqual(evidence["kernel_release"], rel)
             self.assertEqual(evidence["ubuntu_source_tag"], synth_tag)
             self.assertEqual(evidence["ubuntu_source_revision"], peeled_commit)
-            self.assertEqual(evidence["ubuntu_codename"], "stonking")
-            self.assertEqual(evidence["ubuntu_release"], "26.10")
+            self.assertEqual(evidence["ubuntu_codename"], codename)
+            self.assertEqual(evidence["ubuntu_release"], ubuntu)
             self.assertEqual(evidence["dakota_commit"], synth_dakota)
+            result = prepare(layout, evidence, "e" * 40, "2026-10-04T00:00:00Z", "ghcr.io/projectbluefin/dakota-kernel-ubuntu")
+            self.assertIn(f"ubuntu-{ubuntu}", result["tags"])
+            self.assertIn(f"kernel-{rel}", result["tags"])
+            self.assertEqual(result["labels"]["org.opencontainers.image.version"], rel)
+            self.assertEqual(result["labels"]["io.projectbluefin.ubuntu.codename"], codename)
 
 
 if __name__ == "__main__":
