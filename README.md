@@ -7,8 +7,8 @@ BuildStream 2 producer for `ghcr.io/projectbluefin/dakota-kernel-ubuntu`: an Ubu
 - **x86_64 only** (`linux/amd64` in OCI); no multiarch promise.
 - Ubuntu 26.10 (Stonking) source tag **Ubuntu-7.3.0-8.8**, peeled source commit `d03cf7a92919b0e6ab4e4a756dec41542eb2040f` (annotated tag object `664a2f84fd2459e2cdd2b0eed45a89bfee3776ef`), from [Launchpad](https://git.launchpad.net/~ubuntu-kernel/ubuntu/+source/linux/+git/stonking/tag/?h=Ubuntu-7.3.0-8.8).
 - This is a **release-candidate kernel**, not a stable 7.3 release: module/kernel release **`7.3.0-rc5-8-generic-dakota`**.
-- [Dakota recipe pin](https://github.com/projectbluefin/dakota/tree/39d128aa9dfa66d73a6b48cefc70efdc1808766d): `elements/dakota.bst` fixes the source/toolchain/configuration junction to `39d128aa9dfa66d73a6b48cefc70efdc1808766d`, with `arch: x86_64`, `gaming: false`, `x86_64_v3: false`. `elements/kernel.bst` links `dakota.bst:core/linux-ubuntu.bst`.
-- Configuration starts with [Ubuntu generic annotations](https://git.launchpad.net/~ubuntu-kernel/ubuntu/+source/linux/+git/stonking/tree/debian.master/config/annotations?h=Ubuntu-7.3.0-8.8), then applies [Dakota configuration](https://github.com/projectbluefin/dakota/blob/39d128aa9dfa66d73a6b48cefc70efdc1808766d/files/linux/dakota-config.sh) and the [kernel recipe](https://github.com/projectbluefin/dakota/blob/39d128aa9dfa66d73a6b48cefc70efdc1808766d/elements/core/linux-ubuntu.bst), including `CONFIG_RUST=y` and built-in `CONFIG_CRYPTO_ZSTD=y`.
+- [Toolchain/configuration pin](https://github.com/projectbluefin/dakota/tree/39d128aa9dfa66d73a6b48cefc70efdc1808766d): `elements/dakota.bst` fixes the SDK junction to `39d128aa9dfa66d73a6b48cefc70efdc1808766d`, with `arch: x86_64`, `gaming: false`, `x86_64_v3: false`. This repository owns the source-building [kernel recipe](elements/kernel.bst), so Dakota can consume its registry output without owning the producer recipe.
+- Configuration starts with [Ubuntu generic annotations](https://git.launchpad.net/~ubuntu-kernel/ubuntu/+source/linux/+git/stonking/tree/debian.master/config/annotations?h=Ubuntu-7.3.0-8.8), then sources [Dakota configuration helpers](https://github.com/projectbluefin/dakota/tree/39d128aa9dfa66d73a6b48cefc70efdc1808766d/files/linux) from a separately pinned Git source. The recipe requires `CONFIG_RUST=y` and built-in `CONFIG_CRYPTO_ZSTD=y`.
 - `CONFIG_SECURITY_SELINUX=y`, but the default LSM list is `landlock,lockdown,yama,integrity,apparmor,bpf`: SELinux is not selected by default. Consumers requiring SELinux must configure and verify the active LSM at boot, not infer enforcement from compiled support.
 
 The image is a **scratch filesystem artifact**, not a runnable container or bootable OS. It has no userspace, initramfs, bootloader, or Ubuntu Secure Boot signature. Modules are **unsigned**, matching the pinned Dakota policy; registry signing does not sign the kernel or its modules. A successful build/publication is not a boot test. Dakota's native composefs boot test remains blocked elsewhere and is not resolved by this producer.
@@ -43,7 +43,13 @@ gh run view --repo projectbluefin/dakota-kernel-ubuntu RUN_ID --log
 
 Replace `RUN_ID` with the actual listed run ID. Compilation happens on the remote runner through the pinned BuildStream container. The producer command is `just build`: it builds `kernel-image.bst` and checks the OCI layout out to `oci/`. `just bst <ARGS>` exposes the same pinned BST2 Podman wrapper; `BST_FLAGS` supplies optional global BST flags. Run these commands on a remote Linux builder, not as a local compilation prerequisite.
 
+GHA caches the completed kernel OCI by the complete producer-input fingerprint. Documentation-only commits reuse those bytes; recipe, toolchain-pin, runner, license or workflow changes invalidate the cache. The filesystem/configuration inspection runs on cache hits too. Cold builds use the SDK's upstream artifact caches before compiling missing elements.
+
 Published immutable tags have the syntax **`sha-<40-character producer commit>`**. Only the default branch updates **`latest`** and **`ubuntu-26.10`**. Tags identify producer commits, not the upstream kernel commit. Pin consumers by the per-platform manifest digest, not by rolling tags or an OCI index digest. Do not consume a tag until its publication run succeeds.
+
+### One-time maintainer package visibility
+
+GitHub creates new GHCR packages as private; a public source repository does not make the package public. After the first push, an organization/package administrator must open the [package](https://github.com/orgs/projectbluefin/packages/container/dakota-kernel-ubuntu), choose **Package settings → Danger Zone → Change visibility → Public**, and confirm the package name. Public visibility cannot be reverted to private. See [GitHub's access/visibility documentation](https://docs.github.com/en/packages/learn-github-packages/configuring-a-packages-access-control-and-visibility). Keep repository permission inheritance enabled; no consumer token is needed once public.
 
 ### Acquire a real public digest
 
@@ -165,11 +171,12 @@ External modules, especially NVIDIA, must be rebuilt against the imported header
 
 The producer is a pinned source recipe, not an independently maintained kernel fork. For an update:
 
-1. Update and remotely validate Dakota's `core/linux-ubuntu.bst` source ref/configuration first; its current tracking pattern is `Ubuntu-7.3.0-*`.
-2. Set `elements/dakota.bst` to the reviewed **full Dakota commit** containing that recipe. Keep its fixed options unless deliberately changing the supported contract. The junction brings its pinned toolchain and local configuration scripts along with the source ref.
-3. Review any kernel-release/config/architecture changes, update this README, and dispatch the producer on the remote workflow. After successful publication, acquire the new per-platform digest and update consumer refs together with external modules/initramfs.
+1. On a remote builder, run `just bst source track kernel.bst` to track `Ubuntu-7.3.0-*`; review and commit the source ref in `elements/kernel.bst`.
+2. Update the expected release/source tag in `.github/scripts/kernel-evidence.py`, OCI version label in `elements/kernel-image.bst`, and this README when the Ubuntu ABI changes. The changelog determines the kernel's ABI suffix during the build.
+3. For toolchain/configuration changes, update both `elements/dakota.bst` and the helper Git source in `elements/kernel.bst` to a reviewed full Dakota commit. Kernel updates do not require moving these pins.
+4. Dispatch the remote workflow. After successful publication, acquire the new per-platform digest and update consumer refs together with external modules/initramfs.
 
-For the current artifact, corresponding-source inputs are the [Ubuntu source tree at its exact commit](https://git.launchpad.net/~ubuntu-kernel/ubuntu/+source/linux/+git/stonking/tree/?id=d03cf7a92919b0e6ab4e4a756dec41542eb2040f), the [pinned Dakota tree](https://github.com/projectbluefin/dakota/tree/39d128aa9dfa66d73a6b48cefc70efdc1808766d) (recipe, configuration helpers and installation scripts), and this producer repository at the commit identified by its immutable tag. These provide the source and scripts controlling compilation/installation; `/usr/src` alone does not. Preserve complete corresponding source and notices when redistributing binaries; links alone are not a substitute for fulfilling GPL source-distribution obligations.
+For the current artifact, corresponding-source inputs are the [Ubuntu source tree at its exact commit](https://git.launchpad.net/~ubuntu-kernel/ubuntu/+source/linux/+git/stonking/tree/?id=d03cf7a92919b0e6ab4e4a756dec41542eb2040f), the [pinned Dakota tree](https://github.com/projectbluefin/dakota/tree/39d128aa9dfa66d73a6b48cefc70efdc1808766d) (toolchain and configuration helpers), and this producer repository at the commit identified by its immutable tag (kernel recipe and installation commands). These provide the source and scripts controlling compilation/installation; `/usr/src` alone does not. Preserve complete corresponding source and notices when redistributing binaries; links alone are not a substitute for fulfilling GPL source-distribution obligations.
 
 ## License
 

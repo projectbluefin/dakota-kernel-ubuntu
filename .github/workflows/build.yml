@@ -29,7 +29,15 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Restore unchanged kernel OCI
+        id: kernel-cache
+        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5
+        with:
+          path: oci/
+          key: kernel-oci-${{ runner.os }}-${{ hashFiles('project.conf', 'elements/**', 'Justfile', 'LICENSE', '.github/workflows/build.yml') }}
+
       - name: Setup hosted build runner
+        if: steps.kernel-cache.outputs.cache-hit != 'true'
         uses: projectbluefin/actions/bootc-build/setup-runner@v1
         with:
           storage-backend: btrfs
@@ -38,6 +46,7 @@ jobs:
           install-tools: '["just"]'
 
       - name: Build kernel OCI with upstream BuildStream caches
+        if: steps.kernel-cache.outputs.cache-hit != 'true'
         timeout-minutes: 315
         env:
           BST_FLAGS: --max-jobs 2 --builders 1
@@ -51,6 +60,7 @@ jobs:
           PRODUCER_SHA: ${{ github.sha }}
         run: |
           set -euo pipefail
+          mkdir -p logs
           python3 .github/scripts/kernel-evidence.py | tee logs/kernel-evidence.log
           {
             echo '## Kernel build evidence'
