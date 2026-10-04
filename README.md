@@ -47,7 +47,28 @@ Replace `RUN_ID` with the actual listed run ID. Compilation happens on the remot
 
 GHA restores BuildStream's native source/artifact cache and saves it even if a later packaging step fails. BuildStream's content keys decide which artifacts remain valid after source, configuration or toolchain changes; an OCI-only change does not require recompiling an unchanged kernel. Cache retention is best-effort under GitHub's storage quota. Cold builds use the SDK's upstream artifact caches before compiling missing elements. README-only pushes do not launch another build; use manual dispatch when wanted.
 
-Published immutable tags have the syntax **`sha-<40-character producer commit>`**. Only the default branch updates **`latest`** and **`ubuntu-26.10`**. Tags identify producer commits, not the upstream kernel commit. Pin consumers by the per-platform manifest digest, not by rolling tags or an OCI index digest. Do not consume a tag until its publication run succeeds.
+Published immutable tags have the syntax **`sha-<40-character producer commit>`**. Tags identify producer commits, not the upstream kernel commit. The default branch updates the following aliases only after digest verification and signing:
+
+| Tag | What it follows |
+| --- | --- |
+| `latest` | Latest validated Ubuntu development kernel produced here |
+| `ubuntu-26.10` | Latest producer build for Ubuntu 26.10 |
+| `ubuntu-26.10-amd64` | Ubuntu 26.10's x86_64 build |
+| `7.3` | Latest build in kernel series 7.3, **including release candidates** |
+| `7.3.0-rc5` | Latest Ubuntu/configuration rebuild based on upstream 7.3.0-rc5 |
+| `kernel-7.3.0-rc5-8-generic-dakota` | Latest rebuild with this exact `uname -r` |
+| `ubuntu-7.3.0-8.8` | Latest producer rebuild of this exact Ubuntu source release |
+| `sha-<producer commit>` / `@sha256:<digest>` | Exact immutable producer build / registry bytes |
+
+Version aliases can move when configuration or packaging is rebuilt. Resolve and review a tag, then pin its digest in BST. No `stable` tag is advertised for an RC kernel. Tag families are derived from the verified build receipt, not a separate hand-maintained tag list.
+
+Registry labels include the full kernel release/series/upstream version, architecture, Ubuntu release/codename/source tag/source commit/source URL, SDK/configuration commit, producer revision, vendor/authors, GPL license, and repository/documentation URLs. Standard `org.opencontainers.image.version` is the full kernel release; `revision` is the producer commit, not the SDK commit. `created` is that commit's timestamp for reproducibility; the kernel's fixed KBUILD timestamp remains separate. `oci_manifest_digest` in the build receipt is the internal artifact digest, not the converted registry digest.
+
+```sh
+skopeo inspect --no-creds --no-tags docker://ghcr.io/projectbluefin/dakota-kernel-ubuntu:7.3 | jq '{Digest, Architecture, Labels}'
+```
+
+Already-published SHA tags and digests are never rewritten to add labels; newly signed builds carry updated metadata.
 
 For the documented `7.3.0-rc5-8-generic-dakota` release, the [successful signed publication](https://github.com/projectbluefin/dakota-kernel-ubuntu/actions/runs/37195816451) used producer commit `e8183d948b32ff2efa957c716fd04fa77eb76de6`:
 
@@ -193,7 +214,7 @@ External modules, especially NVIDIA, must be rebuilt against the imported header
 The producer is a pinned source recipe, not an independently maintained kernel fork. For an update:
 
 1. On a remote builder, run `just bst source track kernel.bst` to track `Ubuntu-7.3.0-*`; review and commit the source ref in `elements/kernel.bst`.
-2. Update the expected release/source tag in `.github/scripts/kernel-evidence.py`, OCI version label in `elements/kernel-image.bst`, and this README when the Ubuntu ABI changes. The changelog determines the kernel's ABI suffix during the build.
+2. Update the expected release and all Ubuntu source identity fields in `.github/scripts/kernel-evidence.py`, OCI source version label in `elements/kernel-image.bst`, and this README when the Ubuntu ABI changes. The changelog determines the kernel's ABI suffix during the build; the verified receipt drives the registry labels and tag families.
 3. For toolchain/configuration changes, update both `elements/dakota.bst` and the helper Git source in `elements/kernel.bst` to a reviewed full Dakota commit. Kernel updates do not require moving these pins.
 4. Dispatch the remote workflow. After successful publication, acquire the new per-platform digest and update consumer refs together with external modules/initramfs.
 

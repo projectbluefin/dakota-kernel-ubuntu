@@ -61,9 +61,12 @@ for setting in ("CONFIG_RUST=y", "CONFIG_CRYPTO_ZSTD=y", "# CONFIG_MODULE_SIG_AL
         raise ValueError(f"Kernel configuration missing: {setting}")
 evidence = {"kernel_release": release, "architecture": "x86_64", "modules": module_count,
             "headers": True, "rust": True, "crypto_zstd": True, "unsigned_modules": True,
-            "manifest_digest": manifest_descriptor["digest"],
+            "oci_manifest_digest": manifest_descriptor["digest"],
             "dakota_commit": "39d128aa9dfa66d73a6b48cefc70efdc1808766d",
-            "ubuntu_source_tag": "Ubuntu-7.3.0-8.8"}
+            "ubuntu_source_tag": "Ubuntu-7.3.0-8.8",
+            "ubuntu_release": "26.10", "ubuntu_codename": "stonking",
+            "ubuntu_source_revision": "d03cf7a92919b0e6ab4e4a756dec41542eb2040f",
+            "ubuntu_source_url": "https://git.launchpad.net/~ubuntu-kernel/ubuntu/+source/linux/+git/stonking"}
 Path("logs").mkdir(exist_ok=True)
 Path("logs/kernel-evidence.json").write_text(json.dumps(evidence, indent=2) + "\n")
 print(json.dumps(evidence, indent=2))

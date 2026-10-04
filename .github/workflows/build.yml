@@ -45,6 +45,9 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Validate registry metadata invariants
+        run: python3 -m unittest discover -s .github/scripts -p 'test_registry_metadata.py'
+
       - name: Restore BuildStream sources and artifacts
         id: buildstream-cache
         uses: actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25 # v5
@@ -123,16 +126,37 @@ jobs:
       id-token: write
       attestations: write
     steps:
+      - name: Checkout exact metadata publisher
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
       - name: Download exact run OCI layout
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           name: kernel-oci
           path: oci
 
+      - name: Download verified kernel identity
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: kernel-build-logs
+          path: build-evidence
+
       - name: Install registry transport
         run: |
           sudo apt-get update
           sudo apt-get install --yes --no-install-recommends skopeo
+
+      - name: Fill registry labels from verified kernel identity
+        env:
+          PRODUCER_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          mkdir -p logs
+          created=$(git show -s --format=%cI "$PRODUCER_SHA")
+          python3 .github/scripts/registry_metadata.py --layout oci \
+            --evidence build-evidence/kernel-evidence.json --revision "$PRODUCER_SHA" \
+            --created "$created" --image "$IMAGE" --output logs/registry-metadata.json
 
       - name: Prepare stock-BST compatible registry image
         run: |
@@ -195,6 +219,10 @@ jobs:
           skopeo inspect --raw "docker://${IMAGE}@${digest}" > logs/published-manifest.json
           [[ "sha256:$(sha256sum logs/published-manifest.json | cut -d ' ' -f 1)" == "$digest" ]]
           skopeo inspect --config "docker://${IMAGE}@${digest}" | jq -e '.architecture == "amd64" and .os == "linux"'
+          skopeo inspect --config "docker://${IMAGE}@${digest}" > logs/published-config.json
+          jq -e --slurpfile expected logs/registry-metadata.json \
+            '.config.Labels as $actual | $expected[0].labels | to_entries | all(.[]; $actual[.key] == .value)' \
+            logs/published-config.json
           echo "digest=$digest" >> "$GITHUB_OUTPUT"
           printf '%s\n' "$digest" > logs/published-digest.txt
 
@@ -213,10 +241,11 @@ jobs:
         run: |
           set -euo pipefail
           export REGISTRY_AUTH_FILE="$HOME/.docker/config.json"
-          for tag in latest ubuntu-26.10; do
+          jq -er '.tags[]' logs/registry-metadata.json > logs/published-tags.txt
+          while IFS= read -r tag; do
             skopeo copy --preserve-digests "docker://${IMAGE}@${DIGEST}" "docker://${IMAGE}:${tag}"
             [[ "$(skopeo inspect --no-tags --format '{{.Digest}}' "docker://${IMAGE}:${tag}")" == "$DIGEST" ]]
-          done
+          done < logs/published-tags.txt
 
       - name: Record publication evidence
         env:
@@ -229,7 +258,9 @@ jobs:
             printf '* Immutable image: `%s:sha-%s`\n' "$IMAGE" "$PRODUCER_SHA"
             printf '* Verified linux/amd64 manifest: `%s@%s`\n' "$IMAGE" "$DIGEST"
             printf '* BuildStream docker source ref (no prefix): `%s`\n' "${DIGEST#sha256:}"
-            echo '* Rolling tags: `latest`, `ubuntu-26.10`'
+            printf '* Followable tags: '
+            jq -r '.tags | map("`" + . + "`") | join(", ")' logs/registry-metadata.json
+            echo '* Labels: producer revision, source revision, kernel release/series, Ubuntu release/codename, architecture, license and documentation.'
             echo '* Keyless signature verified; GitHub build provenance pushed to GHCR.'
           } >> "$GITHUB_STEP_SUMMARY"
 

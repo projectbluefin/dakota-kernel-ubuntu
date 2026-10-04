@@ -31,7 +31,7 @@ config:
           org.opencontainers.image.source: https://github.com/projectbluefin/dakota-kernel-ubuntu
           org.opencontainers.image.licenses: GPL-2.0-only
           org.opencontainers.image.version: Ubuntu-7.3.0-8.8
-          io.projectbluefin.dakota.source-revision: 39d128aa9dfa66d73a6b48cefc70efdc1808766d
+          io.projectbluefin.dakota.config-revision: 39d128aa9dfa66d73a6b48cefc70efdc1808766d
       index-annotations:
         org.opencontainers.image.ref.name: ghcr.io/projectbluefin/dakota-kernel-ubuntu:latest
     EOF
