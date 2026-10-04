@@ -8,7 +8,6 @@ on:
       - 'project.conf'
       - 'Justfile'
       - 'LICENSE'
-      - 'renovate.json'
       - '.github/workflows/build.yml'
       - '.github/scripts/**'
   pull_request:
@@ -18,7 +17,6 @@ on:
       - 'project.conf'
       - 'Justfile'
       - 'LICENSE'
-      - 'renovate.json'
       - '.github/workflows/build.yml'
       - '.github/scripts/**'
   workflow_dispatch:
