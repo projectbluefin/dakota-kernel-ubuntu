@@ -101,7 +101,21 @@ for alias_match in re.finditer(r"^\s*([A-Za-z0-9_-]+):\s*(\S+)", project_conf, r
         break
 
 codename_match = re.search(r"/\+git/([A-Za-z0-9_-]+)", source_url)
-ubuntu_codename = codename_match.group(1) if codename_match else "stonking"
+if not codename_match:
+    raise ValueError(f"Could not determine Ubuntu series codename from source URL: {source_url}")
+ubuntu_codename = codename_match.group(1)
+
+ubuntu_series_map = {
+    "noble": "24.04",
+    "oracular": "24.10",
+    "plucky": "25.04",
+    "questing": "25.10",
+    "resolute": "26.04",
+    "stonking": "26.10",
+}
+ubuntu_release = ubuntu_series_map.get(ubuntu_codename)
+if not ubuntu_release:
+    raise ValueError(f"Unknown Ubuntu series release mapping for codename: {ubuntu_codename}")
 peeled_sha = None
 import subprocess
 try:
@@ -129,7 +143,7 @@ evidence = {"kernel_release": release, "architecture": "x86_64", "modules": modu
             "oci_manifest_digest": manifest_descriptor["digest"],
             "dakota_commit": dakota_commit,
             "ubuntu_source_tag": source_tag,
-            "ubuntu_release": "26.10", "ubuntu_codename": ubuntu_codename,
+            "ubuntu_release": ubuntu_release, "ubuntu_codename": ubuntu_codename,
             "ubuntu_source_revision": source_revision,
             "ubuntu_source_url": source_url}
 Path("logs").mkdir(exist_ok=True)

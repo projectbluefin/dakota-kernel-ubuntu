@@ -45,8 +45,8 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Validate registry metadata invariants
-        run: python3 -m unittest discover -s .github/scripts -p 'test_registry_metadata.py'
+      - name: Validate metadata and evidence invariants
+        run: python3 -m unittest discover -s .github/scripts -p 'test_*.py'
 
       - name: Restore BuildStream sources and artifacts
         id: buildstream-cache
