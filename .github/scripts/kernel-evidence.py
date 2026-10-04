@@ -31,6 +31,7 @@ release = "7.3.0-rc5-8-generic-dakota"
 base = f"usr/lib/modules/{release}"
 required = {f"{base}/{name}" for name in ("vmlinuz", "vmlinux", "System.map", "config", "build")}
 required.add("usr/share/licenses/dakota-kernel-ubuntu/LICENSE")
+required.update(f"usr/src/linux-{release}/{name}" for name in ("Makefile", ".config", "Module.symvers"))
 seen = set()
 module_count = 0
 headers = False

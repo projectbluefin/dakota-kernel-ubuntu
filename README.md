@@ -73,6 +73,17 @@ printf 'OCI manifest: %s@%s\nBuildStream ref: %s\n' "$IMAGE" "$DIGEST" "$KERNEL_
 
 Keep the printed digest with the producer commit/run provenance. There is deliberately no invented published digest in this README. BuildStream's Docker source requires the **bare 64-hex digest**, without the `sha256:` prefix.
 
+Verify the keyless publisher signature with [Cosign](https://github.com/sigstore/cosign#verify-a-container-image) before committing that digest:
+
+```sh
+cosign verify \
+  --certificate-identity 'https://github.com/projectbluefin/dakota-kernel-ubuntu/.github/workflows/build.yml@refs/heads/development' \
+  --certificate-oidc-issuer 'https://token.actions.githubusercontent.com' \
+  "${IMAGE}@${DIGEST}"
+```
+
+The BST Docker source validates content digests; it does not perform this publisher-signature check for you.
+
 ## Consume with BuildStream 2
 
 The `docker` source comes from [Apache buildstream-plugins](https://github.com/apache/buildstream-plugins/blob/master/src/buildstream_plugins/sources/docker.py), **not BuildStream's built-in plugins**. Install it into the environment that runs BST (inside your BST container if applicable):
