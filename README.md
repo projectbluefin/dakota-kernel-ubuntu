@@ -209,15 +209,17 @@ This keeps freedesktop-sdk's initramfs, unsigned-module handling, and NVIDIA mod
 
 External modules, especially NVIDIA, must be rebuilt against the imported headers, `.config`, and `Module.symvers` and installed under exactly the matching kernel release. Never combine headers/modules from another Ubuntu ABI or Dakota kernel. An RC kernel may be unsupported by a given NVIDIA driver even when its headers match; compatibility must be established remotely, not assumed. Secure Boot/module trust and production boot validation remain consumer responsibilities.
 
-## Updating and corresponding source
+## Automated daily mirroring and updates
 
-The producer is a pinned source recipe, not an independently maintained kernel fork. For an update:
+Automated discovery and continuous publishing mirror the Ubuntu Stonking kernel without manual intervention:
 
-1. On a remote builder, run `just bst source track kernel.bst` to track `Ubuntu-7.3.0-*`; review and commit the source ref in `elements/kernel.bst`.
-2. Update the expected release and all Ubuntu source identity fields in `.github/scripts/kernel-evidence.py`, OCI source version label in `elements/kernel-image.bst`, and this README when the Ubuntu ABI changes. The changelog determines the kernel's ABI suffix during the build; the verified receipt drives the registry labels and tag families.
-3. For toolchain/configuration changes, update both `elements/dakota.bst` and the helper Git source in `elements/kernel.bst` to a reviewed full Dakota commit. Kernel updates do not require moving these pins.
-4. Dispatch the remote workflow. After successful publication, acquire the new per-platform digest and update consumer refs together with external modules/initramfs.
+1. Renovate checks Launchpad git tags daily (`at any time` schedule, matching `https://git.launchpad.net/~ubuntu-kernel/ubuntu/+source/linux/+git/stonking` tags).
+2. When a newer `Ubuntu-7.3.0-*` tag appears, Renovate updates `elements/kernel.bst` and creates an auto-merge pull request.
+3. Pull request CI runs the BuildStream kernel build, verifies the packaged modules, headers, and configs against the updated Ubuntu tree, and records dynamic kernel evidence.
+4. GitHub auto-merge squashes and merges the pull request into `development` once CI passes.
+5. Push on `development` compiles or verifies the kernel, produces the stock-BST compatible Docker-v2 manifest, pushes the immutable SHA tag and followable rolling tags (`latest`, `ubuntu-26.10`, `7.3`, etc.), signs the manifest with keyless Cosign, and publishes build attestations.
 
+For manual or out-of-band updates, run `just bst source track kernel.bst` to track `Ubuntu-7.3.0-*` and commit the updated ref in `elements/kernel.bst`. Toolchain/configuration changes continue to track `elements/dakota.bst` pins independently.
 For the current artifact, corresponding-source inputs are the [Ubuntu source tree at its exact commit](https://git.launchpad.net/~ubuntu-kernel/ubuntu/+source/linux/+git/stonking/tree/?id=d03cf7a92919b0e6ab4e4a756dec41542eb2040f), the [pinned Dakota tree](https://github.com/projectbluefin/dakota/tree/39d128aa9dfa66d73a6b48cefc70efdc1808766d) (toolchain and configuration helpers), and this producer repository at the commit identified by its immutable tag (kernel recipe and installation commands). These provide the source and scripts controlling compilation/installation; `/usr/src` alone does not. Preserve complete corresponding source and notices when redistributing binaries; links alone are not a substitute for fulfilling GPL source-distribution obligations.
 
 ## License

@@ -8,6 +8,7 @@ on:
       - 'project.conf'
       - 'Justfile'
       - 'LICENSE'
+      - 'renovate.json'
       - '.github/workflows/build.yml'
       - '.github/scripts/**'
   pull_request:
@@ -17,6 +18,7 @@ on:
       - 'project.conf'
       - 'Justfile'
       - 'LICENSE'
+      - 'renovate.json'
       - '.github/workflows/build.yml'
       - '.github/scripts/**'
   workflow_dispatch:
@@ -82,7 +84,10 @@ jobs:
           {
             echo '## Kernel build evidence'
             printf '* Producer checkout: `%s`\n' "$PRODUCER_SHA"
-            echo '* Pinned Ubuntu source: [Ubuntu-7.3.0-8.8](https://git.launchpad.net/~ubuntu-kernel/ubuntu/+source/linux/+git/stonking/tag/?h=Ubuntu-7.3.0-8.8)'
+            printf '* Pinned Ubuntu source: [%s](%s/tag/?h=%s)\n' \
+              "$(jq -r .ubuntu_source_tag logs/kernel-evidence.json)" \
+              "$(jq -r .ubuntu_source_url logs/kernel-evidence.json)" \
+              "$(jq -r .ubuntu_source_tag logs/kernel-evidence.json)"
             echo 'Kernel-only OCI; linux/amd64; no initramfs or userspace.'
             echo '```json'
             cat logs/kernel-evidence.json

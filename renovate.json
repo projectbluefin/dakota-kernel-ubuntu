@@ -1,0 +1,36 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": [
+    "local>projectbluefin/renovate-config"
+  ],
+  "schedule": ["at any time"],
+  "timezone": "UTC",
+  "automerge": true,
+  "automergeType": "pr",
+  "platformAutomerge": true,
+  "rebaseWhen": "conflicted",
+  "customManagers": [
+    {
+      "customType": "regex",
+      "managerFilePatterns": ["/^elements\\/kernel\\.bst$/"],
+      "matchStrings": [
+        "url:\\s*launchpad:~ubuntu-kernel/ubuntu/\\+source/linux/\\+git/stonking\\s+track:\\s*Ubuntu-7\\.3\\.0-\\*(?:\\s+#.*)?\\s+ref:\\s*(?<currentValue>Ubuntu-(?<currentVersion>[0-9]+\\.[0-9]+\\.[0-9]+-[0-9]+\\.[0-9]+))(?<suffix>-0-g(?<currentDigest>[0-9a-f]{40}))?"
+      ],
+      "depNameTemplate": "https://git.launchpad.net/~ubuntu-kernel/ubuntu/+source/linux/+git/stonking",
+      "datasourceTemplate": "git-tags",
+      "versioningTemplate": "regex:^Ubuntu-(?<major>\\d+)\\.(?<minor>\\d+)\\.(?<patch>\\d+)-(?<build>\\d+)\\.(?<revision>\\d+)$",
+      "autoReplaceStringTemplate": "url: launchpad:~ubuntu-kernel/ubuntu/+source/linux/+git/stonking\n  track: Ubuntu-7.3.0-*\n  ref: {{{newValue}}}-0-g{{{newDigest}}}"
+    }
+  ],
+  "packageRules": [
+    {
+      "description": "Ubuntu 7.3.0 generic kernel updates with auto-merge",
+      "matchPackageNames": ["https://git.launchpad.net/~ubuntu-kernel/ubuntu/+source/linux/+git/stonking"],
+      "matchUpdateTypes": ["digest", "pin", "patch", "minor", "major"],
+      "automerge": true,
+      "automergeType": "pr",
+      "automergeStrategy": "squash",
+      "labels": ["kernel", "automerge"]
+    }
+  ]
+}
