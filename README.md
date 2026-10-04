@@ -49,6 +49,14 @@ GHA restores BuildStream's native source/artifact cache and saves it even if a l
 
 Published immutable tags have the syntax **`sha-<40-character producer commit>`**. Only the default branch updates **`latest`** and **`ubuntu-26.10`**. Tags identify producer commits, not the upstream kernel commit. Pin consumers by the per-platform manifest digest, not by rolling tags or an OCI index digest. Do not consume a tag until its publication run succeeds.
 
+For the documented `7.3.0-rc5-8-generic-dakota` release, the [successful signed publication](https://github.com/projectbluefin/dakota-kernel-ubuntu/actions/runs/37195816451) used producer commit `e8183d948b32ff2efa957c716fd04fa77eb76de6`:
+
+```text
+ghcr.io/projectbluefin/dakota-kernel-ubuntu@sha256:4e2ce6dfe1c2976115ad2f1c50aece4e865a2528adf839388983fcfc725db655
+```
+
+Its bare BST `ref` is `4e2ce6dfe1c2976115ad2f1c50aece4e865a2528adf839388983fcfc725db655`. This reference is anonymously readable and was fetched/imported remotely with unpatched `buildstream-plugins==2.5.0`, including the matching development headers and `build` symlink.
+
 ### One-time maintainer package visibility
 
 For a new private GHCR package, an organization/package administrator must open the [package](https://github.com/orgs/projectbluefin/packages/container/dakota-kernel-ubuntu), choose **Package settings → Danger Zone → Change visibility → Public**, and confirm the package name. A public source repository alone does not guarantee public package visibility. Public visibility cannot be reverted to private. See [GitHub's access/visibility documentation](https://docs.github.com/en/packages/learn-github-packages/configuring-a-packages-access-control-and-visibility). Keep repository permission inheritance enabled; no consumer token is needed once public. Check anonymous access with the commands below before requesting any visibility change.
