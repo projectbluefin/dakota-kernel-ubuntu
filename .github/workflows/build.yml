@@ -134,6 +134,18 @@ jobs:
           sudo apt-get update
           sudo apt-get install --yes --no-install-recommends skopeo
 
+      - name: Prepare stock-BST compatible registry image
+        run: |
+          set -euo pipefail
+          mkdir -p logs
+          # The released docker source supports Docker-v2 manifests, not OCI.
+          skopeo copy --format v2s2 --dest-compress --dest-compress-format gzip \
+            oci:oci dir:registry-image
+          skopeo inspect --raw dir:registry-image > logs/registry-manifest.json
+          skopeo inspect --config oci:oci | jq -S '.rootfs.diff_ids' > logs/source-filesystem.json
+          skopeo inspect --config dir:registry-image | jq -S '.rootfs.diff_ids' > logs/registry-filesystem.json
+          cmp logs/source-filesystem.json logs/registry-filesystem.json
+
       - name: Login to GHCR
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -153,7 +165,7 @@ jobs:
           set -euo pipefail
           export REGISTRY_AUTH_FILE="$HOME/.docker/config.json"
           [[ "$PRODUCER_SHA" =~ ^[0-9a-f]{40}$ ]]
-          digest="sha256:$(skopeo inspect --raw oci:oci | sha256sum | cut -d ' ' -f 1)"
+          digest="sha256:$(sha256sum logs/registry-manifest.json | cut -d ' ' -f 1)"
           [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]]
           tag="sha-${PRODUCER_SHA}"
           # Never replace an existing producer SHA with different bytes.
@@ -164,7 +176,7 @@ jobs:
           echo "::add-mask::$bearer"
           status="$(curl --silent --show-error --output logs/existing-manifest.json --write-out '%{http_code}' \
             --header "Authorization: Bearer $bearer" \
-            --header 'Accept: application/vnd.oci.image.manifest.v1+json' \
+            --header 'Accept: application/vnd.docker.distribution.manifest.v2+json' \
             "https://ghcr.io/v2/projectbluefin/dakota-kernel-ubuntu/manifests/${tag}")"
           if [[ "$status" == 200 ]]; then
             [[ "sha256:$(sha256sum logs/existing-manifest.json | cut -d ' ' -f 1)" == "$digest" ]] || {
@@ -172,7 +184,7 @@ jobs:
               exit 1
             }
           elif [[ "$status" == 404 ]]; then
-            skopeo copy --preserve-digests --digestfile logs/pushed-digest.txt oci:oci "docker://${IMAGE}:${tag}"
+            skopeo copy --preserve-digests --digestfile logs/pushed-digest.txt dir:registry-image "docker://${IMAGE}:${tag}"
             [[ "$(cat logs/pushed-digest.txt)" == "$digest" ]]
           else
             echo "::error::Cannot establish immutable-tag state (HTTP $status)."

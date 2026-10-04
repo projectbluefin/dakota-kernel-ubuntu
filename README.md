@@ -13,6 +13,8 @@ BuildStream 2 producer for `ghcr.io/projectbluefin/dakota-kernel-ubuntu`: an Ubu
 
 The image is a **scratch filesystem artifact**, not a runnable container or bootable OS. It has no userspace, initramfs, bootloader, or Ubuntu Secure Boot signature. Modules are **unsigned**, matching the pinned Dakota policy; registry signing does not sign the kernel or its modules. A successful build/publication is not a boot test. Dakota's native composefs boot test remains blocked elsewhere and is not resolved by this producer.
 
+BuildStream produces an OCI layout internally. GHCR serves a gzip-compressed Docker-v2 manifest so the released `buildstream-plugins==2.5.0` Docker source works without an OCI-support patch. Conversion preserves the uncompressed filesystem digest; publication verifies and signs the **registry manifest digest after conversion**, not the internal OCI manifest digest.
+
 ## Filesystem contract
 
 The complete kernel artifact is preserved, including development files:
@@ -49,7 +51,7 @@ Published immutable tags have the syntax **`sha-<40-character producer commit>`*
 
 ### One-time maintainer package visibility
 
-GitHub creates new GHCR packages as private; a public source repository does not make the package public. After the first push, an organization/package administrator must open the [package](https://github.com/orgs/projectbluefin/packages/container/dakota-kernel-ubuntu), choose **Package settings → Danger Zone → Change visibility → Public**, and confirm the package name. Public visibility cannot be reverted to private. See [GitHub's access/visibility documentation](https://docs.github.com/en/packages/learn-github-packages/configuring-a-packages-access-control-and-visibility). Keep repository permission inheritance enabled; no consumer token is needed once public.
+For a new private GHCR package, an organization/package administrator must open the [package](https://github.com/orgs/projectbluefin/packages/container/dakota-kernel-ubuntu), choose **Package settings → Danger Zone → Change visibility → Public**, and confirm the package name. A public source repository alone does not guarantee public package visibility. Public visibility cannot be reverted to private. See [GitHub's access/visibility documentation](https://docs.github.com/en/packages/learn-github-packages/configuring-a-packages-access-control-and-visibility). Keep repository permission inheritance enabled; no consumer token is needed once public. Check anonymous access with the commands below before requesting any visibility change.
 
 ### Acquire a real public digest
 
