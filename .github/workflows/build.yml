@@ -1,0 +1,201 @@
+name: Build and publish Ubuntu kernel
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: kernel-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  IMAGE: ghcr.io/projectbluefin/dakota-kernel-ubuntu
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  build:
+    runs-on: ubuntu-26.04
+    timeout-minutes: 350
+    steps:
+      - name: Checkout producer
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: Setup hosted build runner
+        uses: projectbluefin/actions/bootc-build/setup-runner@v1
+        with:
+          storage-backend: btrfs
+          update-podman: true
+          native-overlay: true
+          install-tools: '["just"]'
+
+      - name: Build kernel OCI with upstream BuildStream caches
+        timeout-minutes: 315
+        env:
+          BST_FLAGS: --max-jobs 2 --builders 1
+        run: |
+          set -euo pipefail
+          mkdir -p logs
+          just build 2>&1 | tee logs/build.log
+
+      - name: Inspect kernel artifact and record evidence
+        env:
+          PRODUCER_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          python3 .github/scripts/kernel-evidence.py | tee logs/kernel-evidence.log
+          {
+            echo '## Kernel build evidence'
+            printf '* Producer checkout: `%s`\n' "$PRODUCER_SHA"
+            echo '* Pinned Ubuntu source: [Ubuntu-7.3.0-8.8](https://git.launchpad.net/~ubuntu-kernel/ubuntu/+source/linux/+git/stonking/tag/?h=Ubuntu-7.3.0-8.8)'
+            echo 'Kernel-only OCI; linux/amd64; no initramfs or userspace.'
+            echo '```json'
+            cat logs/kernel-evidence.json
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload OCI for trusted publication
+        if: github.repository == 'projectbluefin/dakota-kernel-ubuntu' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch) && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: kernel-oci
+          path: oci/
+          compression-level: 0
+          retention-days: 1
+          if-no-files-found: error
+
+      - name: Preserve build logs and evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: kernel-build-logs
+          path: logs/
+          retention-days: 14
+          if-no-files-found: warn
+
+  publish:
+    needs: build
+    if: github.repository == 'projectbluefin/dakota-kernel-ubuntu' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch) && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+    runs-on: ubuntu-26.04
+    timeout-minutes: 35
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+      attestations: write
+    steps:
+      - name: Download exact run OCI layout
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: kernel-oci
+          path: oci
+
+      - name: Install registry transport
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends skopeo
+
+      - name: Login to GHCR
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_ACTOR: ${{ github.actor }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$HOME/.docker" logs
+          printf '%s' "$GH_TOKEN" | skopeo login --authfile "$HOME/.docker/config.json" --username "$GH_ACTOR" --password-stdin ghcr.io
+
+      - name: Publish immutable producer SHA and verify digest
+        id: push
+        env:
+          PRODUCER_SHA: ${{ github.sha }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_ACTOR: ${{ github.actor }}
+        run: |
+          set -euo pipefail
+          export REGISTRY_AUTH_FILE="$HOME/.docker/config.json"
+          [[ "$PRODUCER_SHA" =~ ^[0-9a-f]{40}$ ]]
+          digest="sha256:$(skopeo inspect --raw oci:oci | sha256sum | cut -d ' ' -f 1)"
+          [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]]
+          tag="sha-${PRODUCER_SHA}"
+          # Never replace an existing producer SHA with different bytes.
+          bearer="$(curl --fail --silent --show-error --get --user "$GH_ACTOR:$GH_TOKEN" \
+            --data-urlencode 'service=ghcr.io' \
+            --data-urlencode 'scope=repository:projectbluefin/dakota-kernel-ubuntu:pull,push' \
+            https://ghcr.io/token | jq -er .token)"
+          echo "::add-mask::$bearer"
+          status="$(curl --silent --show-error --output logs/existing-manifest.json --write-out '%{http_code}' \
+            --header "Authorization: Bearer $bearer" \
+            --header 'Accept: application/vnd.oci.image.manifest.v1+json' \
+            "https://ghcr.io/v2/projectbluefin/dakota-kernel-ubuntu/manifests/${tag}")"
+          if [[ "$status" == 200 ]]; then
+            [[ "sha256:$(sha256sum logs/existing-manifest.json | cut -d ' ' -f 1)" == "$digest" ]] || {
+              echo '::error::Producer SHA already points to a different image; immutable tag refused.'
+              exit 1
+            }
+          elif [[ "$status" == 404 ]]; then
+            skopeo copy --preserve-digests --digestfile logs/pushed-digest.txt oci:oci "docker://${IMAGE}:${tag}"
+            [[ "$(cat logs/pushed-digest.txt)" == "$digest" ]]
+          else
+            echo "::error::Cannot establish immutable-tag state (HTTP $status)."
+            exit 1
+          fi
+          remote="$(skopeo inspect --no-tags --format '{{.Digest}}' "docker://${IMAGE}:${tag}")"
+          [[ "$remote" == "$digest" ]]
+          skopeo inspect --raw "docker://${IMAGE}@${digest}" > logs/published-manifest.json
+          [[ "sha256:$(sha256sum logs/published-manifest.json | cut -d ' ' -f 1)" == "$digest" ]]
+          jq -e '.mediaType == "application/vnd.oci.image.manifest.v1+json"' logs/published-manifest.json
+          skopeo inspect --config "docker://${IMAGE}@${digest}" | jq -e '.architecture == "amd64" and .os == "linux"'
+          echo "digest=$digest" >> "$GITHUB_OUTPUT"
+          printf '%s\n' "$digest" > logs/published-digest.txt
+
+      - name: Sign and attest exact published digest
+        uses: projectbluefin/actions/bootc-build/sign-and-publish@v1
+        with:
+          image: ghcr.io/projectbluefin/dakota-kernel-ubuntu
+          digest: ${{ steps.push.outputs.digest }}
+          generate-sbom: false
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          certificate-identity-regexp: '^https://github\.com/projectbluefin/dakota-kernel-ubuntu/\.github/workflows/build\.yml@refs/heads/development$'
+
+      - name: Update rolling tags only after signing
+        env:
+          DIGEST: ${{ steps.push.outputs.digest }}
+        run: |
+          set -euo pipefail
+          export REGISTRY_AUTH_FILE="$HOME/.docker/config.json"
+          for tag in latest ubuntu-26.10; do
+            skopeo copy --preserve-digests "docker://${IMAGE}@${DIGEST}" "docker://${IMAGE}:${tag}"
+            [[ "$(skopeo inspect --no-tags --format '{{.Digest}}' "docker://${IMAGE}:${tag}")" == "$DIGEST" ]]
+          done
+
+      - name: Record publication evidence
+        env:
+          PRODUCER_SHA: ${{ github.sha }}
+          DIGEST: ${{ steps.push.outputs.digest }}
+        run: |
+          {
+            echo '## Signed kernel publication'
+            printf '* Producer: `%s`\n' "$PRODUCER_SHA"
+            printf '* Immutable image: `%s:sha-%s`\n' "$IMAGE" "$PRODUCER_SHA"
+            printf '* Verified linux/amd64 manifest: `%s@%s`\n' "$IMAGE" "$DIGEST"
+            printf '* BuildStream docker source ref (no prefix): `%s`\n' "${DIGEST#sha256:}"
+            echo '* Rolling tags: `latest`, `ubuntu-26.10`'
+            echo '* Keyless signature verified; GitHub build provenance pushed to GHCR.'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Preserve publication logs
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: kernel-publication-logs
+          path: logs/
+          retention-days: 14
+          if-no-files-found: warn
