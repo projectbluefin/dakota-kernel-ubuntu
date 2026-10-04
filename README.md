@@ -1,0 +1,176 @@
+# Dakota Ubuntu kernel
+
+BuildStream 2 producer for `ghcr.io/projectbluefin/dakota-kernel-ubuntu`: an Ubuntu-source kernel compiled remotely by GitHub Actions, reusable by Dakota or any BuildStream project. No Ubuntu packages, RPMs, or prebuilt distribution kernels are used.
+
+## Current scope and source
+
+- **x86_64 only** (`linux/amd64` in OCI); no multiarch promise.
+- Ubuntu 26.10 (Stonking) source tag **Ubuntu-7.3.0-8.8**, peeled source commit `d03cf7a92919b0e6ab4e4a756dec41542eb2040f` (annotated tag object `664a2f84fd2459e2cdd2b0eed45a89bfee3776ef`), from [Launchpad](https://git.launchpad.net/~ubuntu-kernel/ubuntu/+source/linux/+git/stonking/tag/?h=Ubuntu-7.3.0-8.8).
+- This is a **release-candidate kernel**, not a stable 7.3 release: module/kernel release **`7.3.0-rc5-8-generic-dakota`**.
+- [Dakota recipe pin](https://github.com/projectbluefin/dakota/tree/39d128aa9dfa66d73a6b48cefc70efdc1808766d): `elements/dakota.bst` fixes the source/toolchain/configuration junction to `39d128aa9dfa66d73a6b48cefc70efdc1808766d`, with `arch: x86_64`, `gaming: false`, `x86_64_v3: false`. `elements/kernel.bst` links `dakota.bst:core/linux-ubuntu.bst`.
+- Configuration starts with [Ubuntu generic annotations](https://git.launchpad.net/~ubuntu-kernel/ubuntu/+source/linux/+git/stonking/tree/debian.master/config/annotations?h=Ubuntu-7.3.0-8.8), then applies [Dakota configuration](https://github.com/projectbluefin/dakota/blob/39d128aa9dfa66d73a6b48cefc70efdc1808766d/files/linux/dakota-config.sh) and the [kernel recipe](https://github.com/projectbluefin/dakota/blob/39d128aa9dfa66d73a6b48cefc70efdc1808766d/elements/core/linux-ubuntu.bst), including `CONFIG_RUST=y` and built-in `CONFIG_CRYPTO_ZSTD=y`.
+- `CONFIG_SECURITY_SELINUX=y`, but the default LSM list is `landlock,lockdown,yama,integrity,apparmor,bpf`: SELinux is not selected by default. Consumers requiring SELinux must configure and verify the active LSM at boot, not infer enforcement from compiled support.
+
+The image is a **scratch filesystem artifact**, not a runnable container or bootable OS. It has no userspace, initramfs, bootloader, or Ubuntu Secure Boot signature. Modules are **unsigned**, matching the pinned Dakota policy; registry signing does not sign the kernel or its modules. A successful build/publication is not a boot test. Dakota's native composefs boot test remains blocked elsewhere and is not resolved by this producer.
+
+## Filesystem contract
+
+The complete kernel artifact is preserved, including development files:
+
+```text
+/usr/lib/modules/<kernel-release>/
+  vmlinuz, config, System.map, vmlinux
+  kernel/...                       # installed modules
+  modules.*                        # module metadata
+  build -> ../../../src/linux-<kernel-release>
+/usr/src/linux-<kernel-release>/    # matching module build headers/scripts,
+                                   # .config and Module.symvers
+/usr/share/licenses/dakota-kernel-ubuntu/LICENSE
+```
+
+Consumers choose runtime/development splits rather than the producer discarding headers. The `build` symlink and its `/usr/src` target must travel together when compiling external modules. These headers are not the complete corresponding kernel source.
+
+## Remote build and publication
+
+Use the repository's [Actions page](https://github.com/projectbluefin/dakota-kernel-ubuntu/actions) to dispatch the build on `development` (the initial default branch), or use an authenticated GitHub CLI account with workflow permission:
+
+```sh
+gh workflow run build.yml --repo projectbluefin/dakota-kernel-ubuntu --ref development
+gh run list --repo projectbluefin/dakota-kernel-ubuntu --branch development --limit 5
+gh run watch --repo projectbluefin/dakota-kernel-ubuntu RUN_ID
+gh run view --repo projectbluefin/dakota-kernel-ubuntu RUN_ID --log
+```
+
+Replace `RUN_ID` with the actual listed run ID. Compilation happens on the remote runner through the pinned BuildStream container. The producer command is `just build`: it builds `kernel-image.bst` and checks the OCI layout out to `oci/`. `just bst <ARGS>` exposes the same pinned BST2 Podman wrapper; `BST_FLAGS` supplies optional global BST flags. Run these commands on a remote Linux builder, not as a local compilation prerequisite.
+
+Published immutable tags have the syntax **`sha-<40-character producer commit>`**. Only the default branch updates **`latest`** and **`ubuntu-26.10`**. Tags identify producer commits, not the upstream kernel commit. Pin consumers by the per-platform manifest digest, not by rolling tags or an OCI index digest. Do not consume a tag until its publication run succeeds.
+
+### Acquire a real public digest
+
+Public GHCR reads need no login or personal access token. With `skopeo`, `jq`, and `sha256sum` available, query a published tag and select its `linux/amd64` manifest. This handles both a single manifest and an OCI index without assuming the tag's shape:
+
+```sh
+set -eu
+IMAGE=ghcr.io/projectbluefin/dakota-kernel-ubuntu
+TAG=latest # or the actual sha-<producer commit> tag from a successful run
+skopeo inspect --no-creds --raw "docker://${IMAGE}:${TAG}" > kernel-manifest.json
+if jq -e '.manifests' kernel-manifest.json >/dev/null; then
+  DIGEST=$(jq -er '[.manifests[] | select(.platform.os == "linux" and .platform.architecture == "amd64")] | if length == 1 then .[0].digest else error("expected one linux/amd64 manifest") end' kernel-manifest.json)
+else
+  DIGEST=sha256:$(sha256sum kernel-manifest.json | cut -d ' ' -f 1)
+fi
+skopeo inspect --no-creds "docker://${IMAGE}@${DIGEST}" |
+  jq -e '.Os == "linux" and .Architecture == "amd64"'
+KERNEL_REF=${DIGEST#sha256:}
+printf 'OCI manifest: %s@%s\nBuildStream ref: %s\n' "$IMAGE" "$DIGEST" "$KERNEL_REF"
+```
+
+Keep the printed digest with the producer commit/run provenance. There is deliberately no invented published digest in this README. BuildStream's Docker source requires the **bare 64-hex digest**, without the `sha256:` prefix.
+
+## Consume with BuildStream 2
+
+The `docker` source comes from [Apache buildstream-plugins](https://github.com/apache/buildstream-plugins/blob/master/src/buildstream_plugins/sources/docker.py), **not BuildStream's built-in plugins**. Install it into the environment that runs BST (inside your BST container if applicable):
+
+```sh
+python3 -m pip install 'buildstream-plugins==2.5.0'
+```
+
+Merge these entries into your consumer `project.conf`, preserving existing plugins and aliases:
+
+```yaml
+plugins:
+- origin: pip
+  package-name: buildstream-plugins==2.5.0
+  sources:
+  - docker
+
+aliases:
+  ghcr: https://ghcr.io/
+```
+
+After running the digest acquisition commands above, generate `elements/core/linux-ubuntu.bst`. This expands the **real** `KERNEL_REF` into valid YAML rather than asking you to copy an example digest:
+
+```sh
+mkdir -p elements/core
+cat > elements/core/linux-ubuntu.bst <<EOF
+kind: import
+sources:
+- kind: docker
+  url: ghcr:projectbluefin/dakota-kernel-ubuntu
+  architecture: amd64
+  os: linux
+  ref: ${KERNEL_REF}
+public:
+  bst:
+    split-rules:
+      devel:
+      - /usr/src
+      - /usr/src/**
+      - /usr/lib/modules/*/build
+      - /usr/lib/modules/*/System.map
+      - /usr/lib/modules/*/vmlinux
+      runtime:
+      - /usr/lib/modules/*/vmlinuz
+      - /usr/lib/modules/*/config
+      - /usr/lib/modules/*/kernel/**
+      - /usr/lib/modules/*/modules.*
+EOF
+```
+
+Commit the resulting element/ref to your consumer repository. Optional `track: latest` under the Docker source enables `bst source track core/linux-ubuntu.bst` for intentional updates; review and commit the newly resolved ref before building. Without `track`, the digest stays fixed. Split patterns are absolute artifact paths, not shell globs relative to the element.
+
+### Generic project wiring
+
+An external-module builder uses the **whole imported artifact**, including its matching development split:
+
+```yaml
+build-depends:
+- core/linux-ubuntu.bst
+```
+
+Add the kernel as a build dependency of your runtime `compose` element, alongside its existing OS inputs, and select runtime while excluding development:
+
+```yaml
+kind: compose
+build-depends:
+- core/linux-ubuntu.bst
+# Add your existing runtime userspace/firmware/initramfs elements here.
+config:
+  include:
+  - runtime
+  exclude:
+  - devel
+  include-orphans: true
+```
+
+Keeping orphans includes files outside explicit splits, such as licensing metadata. The `devel` exclusion prevents headers, `System.map`, and `vmlinux` entering the runtime even if your project has broader inherited runtime rules. Retain whatever integration settings your existing composition needs.
+
+Build an initramfs **in the consumer**, using this same kernel/module artifact plus that OS's userspace, firmware, and boot configuration. Importing the image does not generate one. Ensure the final composition includes both the kernel runtime and the consumer-generated initramfs.
+
+### Dakota wiring
+
+After publication and digest validation, replace/add Dakota's local `core/linux-ubuntu.bst` with the import above and route the freedesktop-sdk kernel at the **junction boundary**. In `elements/freedesktop-sdk.bst`, merge into the existing `config.overrides`:
+
+```yaml
+config:
+  overrides:
+    components/linux.bst: core/linux-ubuntu.bst
+```
+
+This keeps freedesktop-sdk's initramfs, unsigned-module handling, and NVIDIA module builder on the same kernel. Do not merely change the final image dependency: that can leave modules/initramfs built against another release. Remove or change any conditional `gaming` override of `components/linux.bst` if it would select a different kernel; retain unrelated junction overrides. Downstream cutover must wait for an actual published image.
+
+External modules, especially NVIDIA, must be rebuilt against the imported headers, `.config`, and `Module.symvers` and installed under exactly the matching kernel release. Never combine headers/modules from another Ubuntu ABI or Dakota kernel. An RC kernel may be unsupported by a given NVIDIA driver even when its headers match; compatibility must be established remotely, not assumed. Secure Boot/module trust and production boot validation remain consumer responsibilities.
+
+## Updating and corresponding source
+
+The producer is a pinned source recipe, not an independently maintained kernel fork. For an update:
+
+1. Update and remotely validate Dakota's `core/linux-ubuntu.bst` source ref/configuration first; its current tracking pattern is `Ubuntu-7.3.0-*`.
+2. Set `elements/dakota.bst` to the reviewed **full Dakota commit** containing that recipe. Keep its fixed options unless deliberately changing the supported contract. The junction brings its pinned toolchain and local configuration scripts along with the source ref.
+3. Review any kernel-release/config/architecture changes, update this README, and dispatch the producer on the remote workflow. After successful publication, acquire the new per-platform digest and update consumer refs together with external modules/initramfs.
+
+For the current artifact, corresponding-source inputs are the [Ubuntu source tree at its exact commit](https://git.launchpad.net/~ubuntu-kernel/ubuntu/+source/linux/+git/stonking/tree/?id=d03cf7a92919b0e6ab4e4a756dec41542eb2040f), the [pinned Dakota tree](https://github.com/projectbluefin/dakota/tree/39d128aa9dfa66d73a6b48cefc70efdc1808766d) (recipe, configuration helpers and installation scripts), and this producer repository at the commit identified by its immutable tag. These provide the source and scripts controlling compilation/installation; `/usr/src` alone does not. Preserve complete corresponding source and notices when redistributing binaries; links alone are not a substitute for fulfilling GPL source-distribution obligations.
+
+## License
+
+This project's original recipe/documentation and the kernel output are **GPL-2.0-only**; see [LICENSE](LICENSE), copied verbatim from the cached Ubuntu kernel's `LICENSES/preferred/GPL-2.0` license text. The kernel's [COPYING](https://git.launchpad.net/~ubuntu-kernel/ubuntu/+source/linux/+git/stonking/tree/COPYING?h=Ubuntu-7.3.0-8.8), [licensing rules](https://git.launchpad.net/~ubuntu-kernel/ubuntu/+source/linux/+git/stonking/tree/Documentation/process/license-rules.rst?h=Ubuntu-7.3.0-8.8), per-file SPDX notices and syscall exception remain authoritative for individual source/header files. Retain Ubuntu/Dakota configuration-script notices and any component-specific license terms; registry packaging does not erase them.
