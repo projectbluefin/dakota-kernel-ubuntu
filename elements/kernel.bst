@@ -1,5 +1,5 @@
-# Ubuntu 26.10 generic kernel; ported from the Ghost-verified Dakota recipe.
-# Update the Ubuntu source with `just bst source track kernel.bst`.
+# Ubuntu desktop generic kernel; ported from the Ghost-verified Dakota recipe.
+# Update the Ubuntu source with `just track-ubuntu`.
 kind: make
 description: Ubuntu generic kernel, modules and matching development headers
 
@@ -22,6 +22,7 @@ build-depends:
   strict: true
 
 variables:
+  ubuntu-release: '26.10'
   indep-libdir: '%{prefix}/lib'
   strip-binaries: ''
   kernel_arch: '%{arch}'
@@ -131,8 +132,11 @@ public:
 sources:
 - kind: git_repo
   url: launchpad:~ubuntu-kernel/ubuntu/+source/linux/+git/stonking
-  track: Ubuntu-7.3.0-*
-  ref: Ubuntu-7.3.0-8.8-0-g664a2f84fd2459e2cdd2b0eed45a89bfee3776ef
+  track: Ubuntu-*
+  ref: Ubuntu-7.3.0-8.8-0-gd03cf7a92919b0e6ab4e4a756dec41542eb2040f
+  # Conservatively skip iN-suffixed respins; tracking accepts numeric ABI tags.
+  exclude:
+  - Ubuntu-*i*
 # Share the tested configuration helpers without maintaining duplicate copies.
 - kind: git_repo
   url: github:projectbluefin/dakota.git

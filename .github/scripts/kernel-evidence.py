@@ -7,6 +7,8 @@ import posixpath
 import re
 import tarfile
 
+from track_ubuntu_release import ubuntu_release_version
+
 layout = Path("oci")
 
 
@@ -83,7 +85,7 @@ if not m_dakota:
 dakota_commit = m_dakota.group(1)
 
 m_source = re.search(
-    r"url:\s*(?P<url>\S+)\s+track:\s*(?P<track>\S+)\s+ref:\s*(?P<tag>Ubuntu-[0-9]+\.[0-9]+\.[0-9]+-[0-9]+\.[0-9]+)(?:-0-g(?P<tag_sha>[0-9a-f]{40}))?",
+    r"url:\s*(?P<url>\S+)\s+track:\s*(?P<track>\S+)\s+ref:\s*(?P<tag>Ubuntu-[0-9]+\.[0-9]+\.[0-9]+-[0-9]+\.[0-9]+(?:\.[0-9]+)*)-0-g(?P<tag_sha>[0-9a-f]{40})(?:\r?\n|$)",
     kernel_bst
 )
 if not m_source:
@@ -91,7 +93,8 @@ if not m_source:
 
 raw_url = m_source.group("url")
 source_tag = m_source.group("tag")
-tag_sha = m_source.group("tag_sha")
+pinned_sha = m_source.group("tag_sha")
+tag_sha = None
 
 source_url = raw_url
 for alias_match in re.finditer(r"^\s*([A-Za-z0-9_-]+):\s*(\S+)", project_conf, re.MULTILINE):
@@ -105,17 +108,13 @@ if not codename_match:
     raise ValueError(f"Could not determine Ubuntu series codename from source URL: {source_url}")
 ubuntu_codename = codename_match.group(1)
 
-ubuntu_series_map = {
-    "noble": "24.04",
-    "oracular": "24.10",
-    "plucky": "25.04",
-    "questing": "25.10",
-    "resolute": "26.04",
-    "stonking": "26.10",
-}
-ubuntu_release = ubuntu_series_map.get(ubuntu_codename)
-if not ubuntu_release:
-    raise ValueError(f"Unknown Ubuntu series release mapping for codename: {ubuntu_codename}")
+release_match = re.search(r"^  ubuntu-release: ['\"]([0-9]{2}\.[0-9]{2})['\"]$", kernel_bst, re.MULTILINE)
+if not release_match:
+    raise ValueError("Missing Ubuntu desktop release in elements/kernel.bst")
+ubuntu_release = release_match.group(1)
+expected_release = ubuntu_release_version(ubuntu_codename)
+if ubuntu_release != expected_release:
+    raise ValueError(f"Ubuntu release metadata mismatch: {ubuntu_codename} is {expected_release}, not {ubuntu_release}")
 peeled_sha = None
 import subprocess
 try:
@@ -137,6 +136,8 @@ except Exception as err:
 source_revision = peeled_sha or tag_sha
 if not source_revision or not re.fullmatch(r"[0-9a-f]{40}", source_revision):
     raise ValueError(f"Could not resolve valid 40-hex commit for source tag {source_tag} from {source_url}")
+if pinned_sha != source_revision:
+    raise ValueError(f"Pinned Ubuntu revision does not match source tag {source_tag}")
 
 evidence = {"kernel_release": release, "architecture": "x86_64", "modules": module_count,
             "headers": True, "rust": True, "crypto_zstd": True, "unsigned_modules": True,

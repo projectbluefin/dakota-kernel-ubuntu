@@ -1,0 +1,63 @@
+name: Track latest Ubuntu desktop release
+
+on:
+  schedule:
+    - cron: '23 8 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: ubuntu-desktop-release
+  cancel-in-progress: false
+
+jobs:
+  track:
+    runs-on: ubuntu-26.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+      - name: Discover latest Ubuntu desktop kernel
+        run: python3 .github/scripts/track_ubuntu_release.py
+      - name: Open kernel update for review
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          BASE: ${{ github.event.repository.default_branch }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if git diff --quiet -- elements/kernel.bst; then
+            exit 0
+          fi
+          branch="auto/ubuntu-desktop-$(sha256sum elements/kernel.bst | cut -d ' ' -f 1)"
+          if [[ "$(gh pr list --base "$BASE" --state open --limit 100 --json headRefName --jq '[.[] | select(.headRefName | startswith("auto/ubuntu-desktop-"))] | length')" != 0 ]]; then
+            echo 'An Ubuntu desktop kernel update is already awaiting review'
+            exit 0
+          fi
+          if [[ "$(gh pr list --head "$branch" --base "$BASE" --state closed --limit 100 --json mergedAt --jq '[.[] | select(.mergedAt == null)] | length')" != 0 ]]; then
+            echo 'This exact kernel update was rejected; not recreating its PR'
+            exit 0
+          fi
+          remote=$(git ls-remote origin "refs/heads/$branch")
+          if [[ -n "$remote" ]]; then
+            git fetch origin "$branch"
+            [[ "$(git show FETCH_HEAD:elements/kernel.bst)" == "$(cat elements/kernel.bst)" ]] || {
+              echo 'Existing bot branch differs; refusing to overwrite it' >&2
+              exit 1
+            }
+          else
+            git switch -c "$branch"
+            git config user.name 'github-actions[bot]'
+            git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+            git add elements/kernel.bst
+            git commit -m 'chore(kernel): follow latest Ubuntu desktop kernel' -m 'Assisted-by: omp'
+            git push origin "$branch"
+          fi
+          gh pr create --head "$branch" --base "$BASE" \
+            --title 'chore(kernel): follow latest Ubuntu desktop kernel' \
+            --body 'Tracks the latest released desktop series in Ubuntu meta-release, with Stonking as the initial development bootstrap. Released-series kernels must be Published in Release, Updates or Security, never Proposed. A switch from bootstrap to the shipped stable kernel can deliberately select an older tag if the newer one has not shipped. Updates source URL, immutable kernel commit and release metadata together. Approve the PR build, then review before merging; signing/publication remain in the existing build workflow.'
