@@ -28,7 +28,7 @@ jobs:
           ref: ${{ inputs.dakota_ref }}
           persist-credentials: false
       - name: Setup hosted validation runner
-        uses: projectbluefin/actions/bootc-build/setup-runner@v1
+        uses: projectbluefin/actions/bootc-build/setup-runner@48a0112c6293d00357eef0ef3a4ce2e54dbdd94a # v1
         with:
           storage-backend: btrfs
           update-podman: true
