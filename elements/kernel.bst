@@ -132,7 +132,7 @@ sources:
 - kind: git_repo
   url: launchpad:~ubuntu-kernel/ubuntu/+source/linux/+git/stonking
   track: Ubuntu-7.3.0-*
-  ref: Ubuntu-7.3.0-8.8-0-g664a2f84fd2459e2cdd2b0eed45a89bfee3776ef
+  ref: Ubuntu-7.3.0-9.9-0-gbb4af40f902afb78f83d84e0b04afe62dc16463b
 # Share the tested configuration helpers without maintaining duplicate copies.
 - kind: git_repo
   url: github:projectbluefin/dakota.git
