@@ -57,7 +57,7 @@ jobs:
           restore-keys: kernel-bst-${{ runner.os }}-
 
       - name: Setup hosted build runner
-        uses: projectbluefin/actions/bootc-build/setup-runner@44f126717d9c45856fbcff368eb87ce0f26773d3 # v1
+        uses: projectbluefin/actions/bootc-build/setup-runner@f55c40caae7abf265b1f914dae21c519d1f18716 # v1
         with:
           storage-backend: btrfs
           update-podman: true
@@ -230,7 +230,7 @@ jobs:
           printf '%s\n' "$digest" > logs/published-digest.txt
 
       - name: Sign and attest exact published digest
-        uses: projectbluefin/actions/bootc-build/sign-and-publish@44f126717d9c45856fbcff368eb87ce0f26773d3 # v1
+        uses: projectbluefin/actions/bootc-build/sign-and-publish@f55c40caae7abf265b1f914dae21c519d1f18716 # v1
         with:
           image: ghcr.io/projectbluefin/dakota-kernel-ubuntu
           digest: ${{ steps.push.outputs.digest }}
