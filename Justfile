@@ -15,3 +15,7 @@ bst *args:
 build:
     just bst build kernel-image.bst
     just bst artifact checkout --deps none --force kernel-image.bst --directory /src/oci
+
+# Update source pins from Ubuntu's release feed and published generic kernel.
+track-ubuntu:
+    python3 .github/scripts/track_ubuntu_release.py
